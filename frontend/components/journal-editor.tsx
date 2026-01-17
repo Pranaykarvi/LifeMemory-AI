@@ -96,8 +96,8 @@ export function JournalEditor({ selectedDate }: JournalEditorProps) {
       const day = String(dateToSave.getDate()).padStart(2, '0')
       const entryDate = `${year}-${month}-${day}`
       
-      // Convert emoji mood to text
-      const moodText = mood ? moodMap[mood] || null : null
+      // Convert emoji mood to text (convert null to undefined for API)
+      const moodText = mood ? moodMap[mood] || undefined : undefined
 
       // Use the new save endpoint (UPSERT - replaces existing entry for that date)
       await journalApi.save(content, moodText, entryDate)
