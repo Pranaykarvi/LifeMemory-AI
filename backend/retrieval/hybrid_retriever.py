@@ -3,7 +3,7 @@ Hybrid retrieval system with temporal and mood weighting.
 """
 
 from typing import List, Dict, Optional, Tuple
-from datetime import datetime, timedelta
+import datetime as dt
 import asyncpg
 from database.connection import get_db_pool
 from embeddings.embedder import get_embedder
@@ -78,8 +78,7 @@ class HybridRetriever:
                 # Convert ISO string to date if needed
                 start_date = time_filter["start_date"]
                 if isinstance(start_date, str):
-                    from datetime import datetime
-                    start_date = datetime.fromisoformat(start_date.split('T')[0]).date()
+                    start_date = dt.datetime.fromisoformat(start_date.split('T')[0]).date()
                 params.append(start_date)
                 param_idx += 1
             if "end_date" in time_filter:
@@ -87,8 +86,7 @@ class HybridRetriever:
                 # Convert ISO string to date if needed
                 end_date = time_filter["end_date"]
                 if isinstance(end_date, str):
-                    from datetime import datetime
-                    end_date = datetime.fromisoformat(end_date.split('T')[0]).date()
+                    end_date = dt.datetime.fromisoformat(end_date.split('T')[0]).date()
                 params.append(end_date)
                 param_idx += 1
         
@@ -117,7 +115,7 @@ class HybridRetriever:
         
         # Re-rank with temporal and mood weighting
         scored_results = []
-        now = datetime.now(datetime.now().astimezone().tzinfo)
+        now = dt.datetime.now(dt.datetime.now().astimezone().tzinfo)
         
         for row in rows:
             # Vector similarity score (cosine similarity, higher is better)
@@ -130,7 +128,7 @@ class HybridRetriever:
             entry_date = row.get('entry_date')
             if entry_date:
                 if isinstance(entry_date, str):
-                    entry_date = datetime.fromisoformat(entry_date.split('T')[0]).date()
+                    entry_date = dt.datetime.fromisoformat(entry_date.split('T')[0]).date()
                 elif hasattr(entry_date, 'date'):
                     entry_date = entry_date.date() if hasattr(entry_date, 'date') else entry_date
                 days_ago = (now.date() - entry_date).days
@@ -138,7 +136,7 @@ class HybridRetriever:
                 # Fallback to created_at if entry_date not available
                 created_at = row['created_at']
                 if isinstance(created_at, str):
-                    created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    created_at = dt.datetime.fromisoformat(created_at.replace('Z', '+00:00'))
                 days_ago = (now - created_at).days
             
             recency_score = exp(-days_ago / 30.0)  # Exponential decay over 30 days
@@ -209,7 +207,7 @@ class HybridRetriever:
             Optional[Dict]: Dict with 'start_date' and/or 'end_date' if found
         """
         query_lower = query.lower()
-        now = datetime.now()
+        now = dt.datetime.now()
         
         # Simple keyword-based extraction (can be enhanced with NLP)
         filters = {}
@@ -229,11 +227,11 @@ class HybridRetriever:
                     if str(year - 1) in query:
                         year = year - 1
                 
-                start = datetime(year, month_num, 1)
+                start = dt.datetime(year, month_num, 1)
                 if month_num == 12:
-                    end = datetime(year + 1, 1, 1) - timedelta(days=1)
+                    end = dt.datetime(year + 1, 1, 1) - dt.timedelta(days=1)
                 else:
-                    end = datetime(year, month_num + 1, 1) - timedelta(days=1)
+                    end = dt.datetime(year, month_num + 1, 1) - dt.timedelta(days=1)
                 
                 filters['start_date'] = start.isoformat()
                 filters['end_date'] = end.isoformat()
@@ -242,14 +240,14 @@ class HybridRetriever:
         # "Last week", "last month", etc.
         if 'last week' in query_lower:
             end = now
-            start = now - timedelta(days=7)
+            start = now - dt.timedelta(days=7)
             filters['start_date'] = start.isoformat()
             filters['end_date'] = end.isoformat()
             return filters
         
         if 'last month' in query_lower:
             end = now
-            start = now - timedelta(days=30)
+            start = now - dt.timedelta(days=30)
             filters['start_date'] = start.isoformat()
             filters['end_date'] = end.isoformat()
             return filters
