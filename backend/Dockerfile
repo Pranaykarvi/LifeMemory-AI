@@ -10,11 +10,11 @@ RUN apt-get update && apt-get install -y \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
-COPY requirements.txt .
+# Copy production requirements first for better caching
+COPY requirements.prod.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies (production only - no ML/eval tools)
+RUN pip install --no-cache-dir -r requirements.prod.txt
 
 # Copy application code
 COPY . .
