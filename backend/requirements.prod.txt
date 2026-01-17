@@ -14,7 +14,7 @@ asyncpg==0.29.0
 # Pin langchain-core to 0.1.23 (last version supporting langsmith<0.1)
 # This is compatible with langchain 0.1.6 and langchain-community 0.0.20
 langchain==0.1.6
-langchain-core>=0.1.25,<0.2.0
+langchain-core==0.1.23
 langchain-openai==0.0.2
 langchain-community==0.0.20
 langchain-google-genai==0.0.6
