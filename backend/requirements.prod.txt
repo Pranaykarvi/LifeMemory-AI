@@ -11,17 +11,18 @@ pgvector==0.2.4
 asyncpg==0.29.0
 
 # LangChain and LangGraph
-# Note: langchain 0.1.6 requires langsmith<0.1, but langchain-core>=0.1.41 requires langsmith>=0.1.0
-# Solution: Use langchain-core 0.1.23 which is compatible with langchain 0.1.6
+# langgraph 0.0.26 requires langchain-core>=0.1.25
+# langchain 0.1.6 requires langchain-core>=0.1.22,<0.2
+# Solution: Use langchain-core>=0.1.25,<0.2.0 (satisfies both)
 langchain==0.1.6
-langchain-core==0.1.23
+langchain-core>=0.1.25,<0.2.0
 langchain-openai==0.0.2
 langchain-community==0.0.20
 langchain-google-genai==0.0.6
 # langchain-groq requires langchain-core>=0.1.41, so we'll remove it for now
 # langchain-groq==0.1.1
 langgraph==0.0.26
-# langsmith - let pip resolve automatically (will be >=0.0.83,<0.1 for langchain 0.1.6)
+# langsmith - let pip resolve automatically (may be >=0.1.0 for langchain-core>=0.1.25)
 
 # Embeddings
 openai==1.12.0
