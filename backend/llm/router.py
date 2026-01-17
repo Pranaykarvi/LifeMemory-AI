@@ -1,5 +1,6 @@
 """
-LLM Router with safe, production-ready fallback (OpenAI → Gemini → Groq).
+LLM Router with safe, production-ready fallback (OpenAI → Gemini).
+Note: Groq is disabled due to langchain-core version incompatibility.
 All fallback logic is isolated here - LangGraph remains provider-agnostic.
 """
 
@@ -18,10 +19,11 @@ logger = logging.getLogger(__name__)
 
 class LLMRouter:
     """
-    LLM Router with safe fallback chain: OpenAI → Gemini → Groq.
+    LLM Router with safe fallback chain: OpenAI → Gemini.
     
     OpenAI is always primary (required).
-    Gemini and Groq are optional fallbacks.
+    Gemini is optional fallback.
+    Groq is disabled (requires langchain-core>=0.1.41, incompatible with langchain 0.1.6).
     All fallback logic is isolated here.
     """
     
@@ -95,7 +97,7 @@ class LLMRouter:
         """
         Generate response with automatic fallback.
         
-        Tries providers in order: OpenAI → Gemini → Groq
+        Tries providers in order: OpenAI → Gemini
         Returns first successful response or safe fallback string.
         
         Args:
