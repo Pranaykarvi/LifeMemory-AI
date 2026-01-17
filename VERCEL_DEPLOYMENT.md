@@ -15,7 +15,7 @@ You **must** set these environment variables in Vercel before deployment:
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=https://brcfzyyvgotqvgjwqkov.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJyY2Z6eXl2Z290cXZnandxa292Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg2Mjk3NTcsImV4cCI6MjA4NDIwNTc1N30.XBF0XtzTm4k40az4dzM4-0Uu1ehXDduwkEhdQODVuh4
-NEXT_PUBLIC_API_URL=https://your-backend-url.vercel.app
+NEXT_PUBLIC_API_URL=https://lifememory-ai.onrender.com
 ```
 
 **Note:** Replace `https://your-backend-url.vercel.app` with your actual backend deployment URL.
