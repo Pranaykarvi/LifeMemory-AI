@@ -93,18 +93,21 @@ settings = get_settings()
 # Request ID middleware (must be first)
 app.add_middleware(RequestIDMiddleware)
 
-# CORS middleware - Allow Next.js frontend
+# CORS middleware - Allow Next.js frontend (Vercel + local development)
+# Explicitly include production frontend URL for security
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3000",
-        *settings.allowed_origins_list
+        "https://life-memory-ai.vercel.app",  # Production frontend (Vercel)
+        "http://localhost:3000",  # Local development
+        "http://localhost:3001",  # Local development (alternative port)
+        "http://127.0.0.1:3000",  # Local development (IP)
+        *settings.allowed_origins_list  # Additional origins from env (comma-separated)
     ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Include routers
