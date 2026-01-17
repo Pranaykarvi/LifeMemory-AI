@@ -42,7 +42,7 @@ python-multipart==0.0.6
 
 # Utilities
 python-dotenv==1.0.0
-httpx==0.26.0
+httpx>=0.24.0,<0.25.0
 tenacity==8.2.3
 # NumPy - use version with pre-built wheels (Python 3.13 compatible)
 numpy>=2.0.0
