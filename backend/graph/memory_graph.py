@@ -128,7 +128,8 @@ class MemoryGraph:
         logger.info(f"Intent classified: {intent} for query: {state['query'][:50]}...")
         
         llm_provider = get_llm_provider()
-        return {**state, "intent": intent, "llm_provider": llm_provider}
+        # LangGraph nodes must return partial state updates only
+        return {"intent": intent, "llm_provider": llm_provider}
     
     async def memory_retriever(self, state: GraphState) -> GraphState:
         """
@@ -154,7 +155,8 @@ class MemoryGraph:
         
         logger.info(f"Retrieved {len(entries)} entries for user {user_id[:8]}...")
         
-        return {**state, "retrieved_entries": entries}
+        # LangGraph nodes must return partial state updates only
+        return {"retrieved_entries": entries}
     
     async def evidence_safety_check(self, state: GraphState) -> GraphState:
         """
@@ -168,7 +170,8 @@ class MemoryGraph:
             logger.warning(
                 f"Insufficient evidence: {len(entries)} entries < threshold {self.settings.MIN_EVIDENCE_THRESHOLD}"
             )
-            return {**state, "safety_check_passed": False}
+            # LangGraph nodes must return partial state updates only
+            return {"safety_check_passed": False}
         
         # Check relevance scores (if available)
         if entries:
@@ -177,10 +180,12 @@ class MemoryGraph:
                 logger.warning(
                     f"Low relevance: avg score {avg_score:.2f} < threshold {self.settings.MIN_RELEVANCE_SCORE}"
                 )
-                # Still allow but mark as low confidence
-                return {**state, "safety_check_passed": True, "low_confidence": True}
+                # Still allow - low confidence is tracked internally but not in state
+                # LangGraph nodes must return partial state updates only
+                return {"safety_check_passed": True}
         
-        return {**state, "safety_check_passed": True, "low_confidence": False}
+        # LangGraph nodes must return partial state updates only
+        return {"safety_check_passed": True}
     
     async def temporal_pattern_analyzer(self, state: GraphState) -> GraphState:
         """
@@ -190,11 +195,15 @@ class MemoryGraph:
         intent = state["intent"]
         
         if not entries:
-            return {**state, "temporal_patterns": {}}
+            # LangGraph nodes must return partial state updates only
+            # Only set temporal_patterns if we actually computed something
+            return {}
         
         # Only analyze patterns for relevant intents
         if intent not in ["pattern", "temporal_comparison", "reflection"]:
-            return {**state, "temporal_patterns": {}}
+            # LangGraph nodes must return partial state updates only
+            # Only set temporal_patterns if we actually computed something
+            return {}
         
         # Extract temporal information
         from datetime import datetime
@@ -226,7 +235,8 @@ class MemoryGraph:
             for k, v in patterns.items()
         }
         
-        return {**state, "temporal_patterns": patterns}
+        # LangGraph nodes must return partial state updates only
+        return {"temporal_patterns": patterns}
     
     async def reflection_synthesizer(self, state: GraphState) -> GraphState:
         """
@@ -237,7 +247,9 @@ class MemoryGraph:
         entries = state["retrieved_entries"]
         patterns = state.get("temporal_patterns", {})
         safety_passed = state.get("safety_check_passed", False)
-        low_confidence = state.get("low_confidence", False)
+        # Track low confidence internally (not in state schema)
+        avg_score = sum(e.get("score", 0) for e in entries) / len(entries) if entries else 0
+        low_confidence = entries and avg_score < self.settings.MIN_RELEVANCE_SCORE
         
         # Handle insufficient evidence
         if not safety_passed or not entries:
@@ -245,7 +257,9 @@ class MemoryGraph:
                 "I don't have enough journal evidence to answer that question yet. "
                 "Please write more entries first, especially entries related to this topic."
             )
-            return {**state, "answer": answer, "evidence": []}
+            # LangGraph nodes must return partial state updates only
+            # answer must always be set before graph completion
+            return {"answer": answer, "evidence": []}
         
         # Build context from retrieved entries with token budget
         context_parts = []
@@ -283,7 +297,9 @@ class MemoryGraph:
         
         if not context_parts:
             answer = "I couldn't find relevant journal entries to answer that question."
-            return {**state, "answer": answer, "evidence": []}
+            # LangGraph nodes must return partial state updates only
+            # answer must always be set before graph completion
+            return {"answer": answer, "evidence": []}
         
         context = "\n\n".join(context_parts)
         
@@ -344,7 +360,9 @@ Please provide a thoughtful, evidence-based answer. Reference specific entries w
         llm_provider = get_llm_provider()
         logger.info(f"Generated answer using {len(evidence)} evidence entries, provider: {llm_provider}")
         
-        return {**state, "answer": answer, "evidence": evidence, "llm_provider": llm_provider}
+        # LangGraph nodes must return partial state updates only
+        # answer must always be set before graph completion
+        return {"answer": answer, "evidence": evidence, "llm_provider": llm_provider}
     
     async def process_query(self, user_id: str, query: str) -> Dict:
         """
