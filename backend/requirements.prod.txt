@@ -12,7 +12,7 @@ asyncpg==0.29.0
 
 # LangChain and LangGraph
 langchain==0.1.6
-langchain-core>=0.1.41,<0.2.0
+langchain-core==0.1.53
 langchain-openai==0.0.2
 langchain-community==0.0.20
 langchain-google-genai==0.0.6
