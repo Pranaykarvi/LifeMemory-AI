@@ -8,7 +8,8 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_groq import ChatGroq
+# langchain_groq removed - requires langchain-core>=0.1.41 which conflicts with langchain 0.1.6
+# from langchain_groq import ChatGroq
 from config.settings import get_settings
 import logging
 
@@ -53,14 +54,15 @@ class LLMRouter:
                 logger.warning(f"Gemini initialization failed (will skip): {e}")
                 self._gemini_llm = None
         
-        # Groq is optional
-        if self.settings.GROQ_API_KEY:
-            try:
-                self._groq_llm = self._create_groq_llm()
-                logger.info("Initialized LLM: Groq (llama-3.3-8b-instruct)")
-            except Exception as e:
-                logger.warning(f"Groq initialization failed (will skip): {e}")
-                self._groq_llm = None
+        # Groq is disabled - langchain-groq requires langchain-core>=0.1.41 (incompatible with langchain 0.1.6)
+        # if self.settings.GROQ_API_KEY:
+        #     try:
+        #         self._groq_llm = self._create_groq_llm()
+        #         logger.info("Initialized LLM: Groq (llama-3.3-8b-instruct)")
+        #     except Exception as e:
+        #         logger.warning(f"Groq initialization failed (will skip): {e}")
+        #         self._groq_llm = None
+        self._groq_llm = None
     
     def _create_openai_llm(self) -> BaseChatModel:
         """Create OpenAI LLM instance with approved model."""
@@ -79,14 +81,15 @@ class LLMRouter:
             google_api_key=self.settings.GEMINI_API_KEY
         )
     
-    def _create_groq_llm(self) -> BaseChatModel:
-        """Create Groq LLM instance with approved model."""
-        # Use llama-3.3-8b-instruct (current, not decommissioned)
-        return ChatGroq(
-            model="llama-3.3-8b-instruct",
-            temperature=self.settings.LLM_TEMPERATURE,
-            groq_api_key=self.settings.GROQ_API_KEY
-        )
+    # def _create_groq_llm(self) -> BaseChatModel:
+    #     """Create Groq LLM instance with approved model."""
+    #     # Disabled: langchain-groq requires langchain-core>=0.1.41 (incompatible with langchain 0.1.6)
+    #     # Use llama-3.3-8b-instruct (current, not decommissioned)
+    #     return ChatGroq(
+    #         model="llama-3.3-8b-instruct",
+    #         temperature=self.settings.LLM_TEMPERATURE,
+    #         groq_api_key=self.settings.GROQ_API_KEY
+    #     )
     
     async def generate(self, messages: List[BaseMessage]) -> str:
         """
