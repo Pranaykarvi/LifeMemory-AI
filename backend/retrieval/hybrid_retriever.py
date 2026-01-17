@@ -9,6 +9,11 @@ from database.connection import get_db_pool
 from embeddings.embedder import get_embedder
 import numpy as np
 from math import exp
+import json
+import logging
+import ast
+
+logger = logging.getLogger(__name__)
 
 
 class HybridRetriever:
@@ -17,6 +22,73 @@ class HybridRetriever:
     def __init__(self):
         self.embedder = get_embedder()
         self.embedding_dim = self.embedder.get_dimension()
+    
+    def _parse_embedding(self, embedding_value) -> Optional[np.ndarray]:
+        """
+        Parse embedding from database into numeric numpy array.
+        
+        pgvector columns are returned as strings by asyncpg (e.g., "[0.1, 0.2, ...]" or "{0.1, 0.2, ...}").
+        This function safely converts them to float arrays for NumPy operations.
+        
+        Args:
+            embedding_value: Raw embedding value from database (string, list, or array)
+            
+        Returns:
+            Optional[np.ndarray]: Parsed embedding as float32 array, or None if parsing fails
+        """
+        if embedding_value is None:
+            return None
+        
+        try:
+            # If already a list or array, convert directly
+            if isinstance(embedding_value, (list, tuple)):
+                arr = np.array(embedding_value, dtype=np.float32)
+                if arr.ndim == 1 and len(arr) == self.embedding_dim:
+                    return arr
+                return None
+            
+            # If already a numpy array, validate and return
+            if isinstance(embedding_value, np.ndarray):
+                if embedding_value.ndim == 1 and len(embedding_value) == self.embedding_dim:
+                    return embedding_value.astype(np.float32)
+                return None
+            
+            # If string, parse it (pgvector returns strings)
+            if isinstance(embedding_value, str):
+                # Try JSON first (most common format: "[0.1, 0.2, ...]")
+                try:
+                    parsed = json.loads(embedding_value)
+                    arr = np.array(parsed, dtype=np.float32)
+                    if arr.ndim == 1 and len(arr) == self.embedding_dim:
+                        return arr
+                except (json.JSONDecodeError, ValueError):
+                    pass
+                
+                # Try ast.literal_eval for Python literal format
+                try:
+                    parsed = ast.literal_eval(embedding_value)
+                    arr = np.array(parsed, dtype=np.float32)
+                    if arr.ndim == 1 and len(arr) == self.embedding_dim:
+                        return arr
+                except (ValueError, SyntaxError):
+                    pass
+                
+                # Try PostgreSQL array format: "{0.1, 0.2, ...}"
+                if embedding_value.startswith('{') and embedding_value.endswith('}'):
+                    try:
+                        # Remove braces and split by comma
+                        values = embedding_value[1:-1].split(',')
+                        arr = np.array([float(v.strip()) for v in values], dtype=np.float32)
+                        if arr.ndim == 1 and len(arr) == self.embedding_dim:
+                            return arr
+                    except (ValueError, AttributeError):
+                        pass
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"Failed to parse embedding: {type(embedding_value).__name__}, error: {str(e)}")
+            return None
     
     async def retrieve(
         self,
@@ -113,16 +185,37 @@ class HybridRetriever:
         async with pool.acquire() as conn:
             rows = await conn.fetch(base_query, *params)
         
+        # Safety guard: if no rows retrieved, return early
+        if not rows:
+            logger.info(f"No journal entries retrieved for user {user_id[:8]}...")
+            return []
+        
         # Re-rank with temporal and mood weighting
         scored_results = []
         now = dt.datetime.now(dt.datetime.now().astimezone().tzinfo)
+        valid_embeddings_count = 0
+        skipped_embeddings_count = 0
         
         for row in rows:
+            # Parse embedding from database (pgvector returns as string)
+            # CRITICAL: Must parse before NumPy operations to avoid dtype errors
+            parsed_embedding = self._parse_embedding(row['embedding'])
+            
             # Vector similarity score (cosine similarity, higher is better)
-            if row['embedding']:
-                vec_sim = self._cosine_similarity(query_embedding, row['embedding'])
+            if parsed_embedding is not None:
+                vec_sim = self._cosine_similarity(query_embedding, parsed_embedding)
+                if vec_sim is not None:
+                    valid_embeddings_count += 1
+                else:
+                    # Similarity calculation failed, skip this row
+                    skipped_embeddings_count += 1
+                    logger.debug(f"Skipping row {row['id']}: cosine similarity calculation failed")
+                    continue
             else:
-                vec_sim = 0.0
+                # Embedding parsing failed, skip this row
+                skipped_embeddings_count += 1
+                logger.debug(f"Skipping row {row['id']}: embedding parsing failed (type: {type(row['embedding']).__name__})")
+                continue
             
             # Temporal recency score (use entry_date for recency calculation)
             entry_date = row.get('entry_date')
@@ -181,20 +274,79 @@ class HybridRetriever:
                 "mood_score": mood_score
             })
         
+        # Log embedding usage statistics
+        logger.info(
+            f"Embedding processing complete: {valid_embeddings_count} valid, "
+            f"{skipped_embeddings_count} skipped, {len(scored_results)} scored results"
+        )
+        
+        # Safety guard: if too few valid embeddings, return early
+        # This prevents pattern queries from failing with insufficient data
+        if valid_embeddings_count < 2:
+            logger.warning(
+                f"Insufficient valid embeddings ({valid_embeddings_count}) for reliable similarity scoring. "
+                f"Returning {len(scored_results)} results without vector similarity weighting."
+            )
+        
         # Sort by final score and return top results
         scored_results.sort(key=lambda x: x['score'], reverse=True)
         return scored_results[:limit]
     
-    def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
-        """Calculate cosine similarity between two vectors."""
-        vec1 = np.array(vec1)
-        vec2 = np.array(vec2)
-        dot_product = np.dot(vec1, vec2)
-        norm1 = np.linalg.norm(vec1)
-        norm2 = np.linalg.norm(vec2)
-        if norm1 == 0 or norm2 == 0:
-            return 0.0
-        return float(dot_product / (norm1 * norm2))
+    def _cosine_similarity(self, vec1: List[float], vec2) -> Optional[float]:
+        """
+        Calculate cosine similarity between two vectors.
+        
+        Args:
+            vec1: Query embedding (List[float])
+            vec2: Journal embedding (List[float], np.ndarray, or None)
+            
+        Returns:
+            Optional[float]: Cosine similarity (0-1), or None if calculation fails
+        """
+        try:
+            # Convert inputs to numpy arrays with explicit dtype
+            vec1_arr = np.array(vec1, dtype=np.float32)
+            
+            # vec2 should already be parsed (np.ndarray), but validate
+            if vec2 is None:
+                return None
+            
+            if isinstance(vec2, np.ndarray):
+                vec2_arr = vec2.astype(np.float32)
+            elif isinstance(vec2, (list, tuple)):
+                vec2_arr = np.array(vec2, dtype=np.float32)
+            else:
+                # Invalid type (e.g., string) - should not happen if _parse_embedding worked
+                logger.warning(f"Invalid vec2 type in cosine_similarity: {type(vec2).__name__}")
+                return None
+            
+            # Validate dimensions
+            if vec1_arr.ndim != 1 or vec2_arr.ndim != 1:
+                logger.warning(f"Invalid vector dimensions: vec1={vec1_arr.ndim}D, vec2={vec2_arr.ndim}D")
+                return None
+            
+            if len(vec1_arr) != len(vec2_arr):
+                logger.warning(f"Dimension mismatch: vec1={len(vec1_arr)}, vec2={len(vec2_arr)}")
+                return None
+            
+            # Calculate cosine similarity
+            dot_product = np.dot(vec1_arr, vec2_arr)
+            norm1 = np.linalg.norm(vec1_arr)
+            norm2 = np.linalg.norm(vec2_arr)
+            
+            # Handle zero vectors
+            if norm1 == 0 or norm2 == 0:
+                return 0.0
+            
+            similarity = float(dot_product / (norm1 * norm2))
+            
+            # Clamp to valid range (should be [-1, 1] for cosine, but ensure it)
+            return max(-1.0, min(1.0, similarity))
+            
+        except Exception as e:
+            # NEVER raise - always fail gracefully
+            logger.warning(f"Cosine similarity calculation failed: {str(e)}")
+            return None
     
     async def extract_temporal_filters(self, query: str) -> Optional[Dict]:
         """
