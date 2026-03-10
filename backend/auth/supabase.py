@@ -3,6 +3,8 @@ Supabase authentication and JWT verification middleware.
 
 JWT verification uses OIDC discovery to dynamically fetch JWKS URI.
 This is OIDC-compliant and works across all Supabase projects.
+OIDC config is loaded lazily on first use so the app can start without
+network/DNS (e.g. in Docker) when SUPABASE_URL is not yet reachable.
 """
 
 from fastapi import HTTPException, Depends, status
@@ -14,35 +16,35 @@ from database.connection import get_supabase_client
 from config.settings import get_settings
 import logging
 import httpx
+import threading
 
 security = HTTPBearer()
 logger = logging.getLogger(__name__)
 
-# Load OIDC configuration at module initialization
-settings = get_settings()
-OIDC_CONFIG_URL = f"{settings.SUPABASE_URL}/auth/v1/.well-known/openid-configuration"
+# Lazy-loaded OIDC state (filled on first verify_token call)
+_oidc_lock = threading.Lock()
+_issuer: Optional[str] = None
+_jwks_client: Optional[PyJWKClient] = None
 
-# Fetch OIDC config once at startup
-try:
-    with httpx.Client(timeout=5.0) as client:
-        resp = client.get(OIDC_CONFIG_URL)
-        resp.raise_for_status()
-        oidc_config = resp.json()
-    
-    ISSUER = oidc_config["issuer"]
-    JWKS_URI = oidc_config["jwks_uri"]
-    
-    logger.info(f"Loaded OIDC config from /auth/v1/.well-known/openid-configuration")
-    logger.info(f"Issuer: {ISSUER}")
-    logger.info(f"JWKS URI: {JWKS_URI}")
-    
-    # Initialize JWKS client with discovered URI
-    jwks_client = PyJWKClient(JWKS_URI)
-    logger.info("Initialized JWKS client with discovered URI")
-    
-except Exception as e:
-    logger.error(f"Failed to load OIDC configuration: {str(e)}")
-    raise RuntimeError(f"OIDC discovery failed: {str(e)}") from e
+
+def _ensure_oidc_loaded() -> tuple[str, PyJWKClient]:
+    """Load OIDC config and JWKS client on first use; cache and reuse."""
+    global _issuer, _jwks_client
+    with _oidc_lock:
+        if _jwks_client is not None:
+            assert _issuer is not None
+            return _issuer, _jwks_client
+        settings = get_settings()
+        url = f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/.well-known/openid-configuration"
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            oidc_config = resp.json()
+        _issuer = oidc_config["issuer"]
+        jwks_uri = oidc_config["jwks_uri"]
+        _jwks_client = PyJWKClient(jwks_uri)
+        logger.info("Loaded OIDC config and initialized JWKS client (lazy)")
+        return _issuer, _jwks_client
 
 
 def verify_token(
@@ -67,13 +69,14 @@ def verify_token(
         HTTPException: If token is invalid or expired
     """
     token = credentials.credentials
-    
+
     try:
-        logger.info(f"Verifying token: {token[:20]}...")
-        
+        issuer, jwks_client = _ensure_oidc_loaded()
+        logger.debug(f"Verifying token: {token[:20]}...")
+
         # Get signing key from JWKS (discovered via OIDC)
         signing_key = jwks_client.get_signing_key_from_jwt(token).key
-        
+
         # Decode and verify token with ES256 or RS256
         # Supabase projects may use either algorithm depending on configuration
         # Validate audience and issuer for security (OIDC-compliant)
@@ -82,7 +85,7 @@ def verify_token(
             signing_key,
             algorithms=["ES256", "RS256"],
             audience="authenticated",
-            issuer=ISSUER,
+            issuer=issuer,
         )
         
         # Extract user_id from token
