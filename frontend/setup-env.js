@@ -9,9 +9,9 @@ const path = require('path');
 const envContent = `# Frontend Environment Variables
 # Generated automatically - do not edit manually
 
-# Supabase Configuration
-NEXT_PUBLIC_SUPABASE_URL=https://brcfzyyvgotqvgjwqkov.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJyY2Z6eXl2Z290cXZnandxa292Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg2Mjk3NTcsImV4cCI6MjA4NDIwNTc1N30.XBF0XtzTm4k40az4dzM4-0Uu1ehXDduwkEhdQODVuh4
+# Supabase Configuration - replace with your project values from Supabase dashboard
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
 
 # Backend API URL
 NEXT_PUBLIC_API_URL=http://localhost:8000
