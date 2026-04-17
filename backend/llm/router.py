@@ -43,6 +43,7 @@ class LLMRouter:
             model="gpt-4o-mini",
             api_key=self.settings.OPENAI_API_KEY,
             temperature=0.3,
+            max_retries=0,
         )
 
     def _get_gemini(self) -> ChatGoogleGenerativeAI:
