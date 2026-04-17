@@ -9,6 +9,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 from config.settings import get_settings
 import logging
+import httpx
 
 logger = logging.getLogger("llm.router")
 FALLBACK_MESSAGE = "I don't have enough evidence from your entries to answer this confidently."
@@ -20,6 +21,20 @@ class LLMRouter:
     def __init__(self) -> None:
         self.settings = get_settings()
         self._last_provider: str = "fallback"
+        self._gemini_available: Optional[bool] = None
+
+    def _check_gemini_model_available(self, api_key: str, model: str) -> bool:
+        """Fast preflight check to avoid long internal Gemini retries on 404 models."""
+        if self._gemini_available is not None:
+            return self._gemini_available
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.get(url, params={"key": api_key})
+            self._gemini_available = resp.status_code == 200
+        except Exception:
+            self._gemini_available = False
+        return self._gemini_available
 
     def _get_openai(self) -> ChatOpenAI:
         if self.settings.OPENAI_API_KEY is None or not self.settings.OPENAI_API_KEY.strip():
@@ -33,14 +48,15 @@ class LLMRouter:
     def _get_gemini(self) -> ChatGoogleGenerativeAI:
         if self.settings.GEMINI_API_KEY is None or not self.settings.GEMINI_API_KEY.strip():
             raise ValueError("GEMINI_API_KEY not configured")
+        model_name = "gemini-1.5-flash"
+        if not self._check_gemini_model_available(self.settings.GEMINI_API_KEY, model_name):
+            raise ValueError(f"GEMINI model not available: {model_name}")
         return ChatGoogleGenerativeAI(
             # Use a broadly available model alias to avoid 404 on versioned IDs.
-            model="gemini-1.5-flash",
+            model=model_name,
             google_api_key=self.settings.GEMINI_API_KEY,
             temperature=0.3,
             convert_system_message_to_human=True,
-            # Fail fast so router can continue to Groq quickly.
-            max_retries=1,
         )
 
     def _get_groq(self) -> ChatGroq:
