@@ -34,10 +34,13 @@ class LLMRouter:
         if self.settings.GEMINI_API_KEY is None or not self.settings.GEMINI_API_KEY.strip():
             raise ValueError("GEMINI_API_KEY not configured")
         return ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash-002",
+            # Use a broadly available model alias to avoid 404 on versioned IDs.
+            model="gemini-1.5-flash",
             google_api_key=self.settings.GEMINI_API_KEY,
             temperature=0.3,
             convert_system_message_to_human=True,
+            # Fail fast so router can continue to Groq quickly.
+            max_retries=1,
         )
 
     def _get_groq(self) -> ChatGroq:
