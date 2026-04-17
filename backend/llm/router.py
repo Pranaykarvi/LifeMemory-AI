@@ -66,13 +66,13 @@ class LLMRouter:
         # Support both newer (api_key) and older (groq_api_key) langchain-groq signatures.
         try:
             return ChatGroq(
-                model="llama3-8b-8192",
+                model="llama-3.1-8b-instant",
                 api_key=self.settings.GROQ_API_KEY,
                 temperature=0.3,
             )
         except TypeError:
             return ChatGroq(
-                model="llama3-8b-8192",
+                model="llama-3.1-8b-instant",
                 groq_api_key=self.settings.GROQ_API_KEY,
                 temperature=0.3,
             )
