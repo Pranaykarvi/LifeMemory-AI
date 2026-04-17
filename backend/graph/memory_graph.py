@@ -254,8 +254,7 @@ class MemoryGraph:
         # Handle insufficient evidence
         if not safety_passed or not entries:
             answer = (
-                "I don't have enough journal evidence to answer that question yet. "
-                "Please write more entries first, especially entries related to this topic."
+                "I don't have enough evidence from your entries to answer this confidently."
             )
             # LangGraph nodes must return partial state updates only
             # answer must always be set before graph completion
@@ -303,42 +302,130 @@ class MemoryGraph:
         
         context = "\n\n".join(context_parts)
         
-        # Build prompt based on intent with safety instructions
+        # Build prompt based on strict evidence-grounded instructions
         safety_instruction = ""
         if low_confidence:
             safety_instruction = "\n\nIMPORTANT: The retrieved entries have low relevance. Be conservative and only state what is clearly supported by the evidence. Do not make assumptions."
-        
-        if intent == "reflection":
-            system_prompt = f"""You are a reflective AI assistant helping someone understand their own experiences.
-            Based ONLY on the journal entries provided, help them reflect on their question.
-            Be empathetic, evidence-based, and never make assumptions beyond what's in the entries.
-            Never invent emotional causes or reasons that aren't explicitly stated.
-            Reference specific entries when relevant.{safety_instruction}"""
-        elif intent == "pattern":
-            system_prompt = f"""You are analyzing patterns in someone's journal entries.
-            Identify patterns based ONLY on the provided entries.
-            Reference specific dates and entries when describing patterns.{safety_instruction}"""
-        elif intent == "temporal_comparison":
-            system_prompt = f"""You are comparing different time periods in someone's life based on their journals.
-            Compare ONLY based on the provided entries.
-            Be specific about differences and reference entries.{safety_instruction}"""
-        elif intent == "advice":
-            system_prompt = f"""You are providing grounded advice based on someone's journal history.
-            Give advice ONLY based on patterns and evidence from their entries.
-            Never give generic life advice - only insights derived from their own data.{safety_instruction}"""
-        else:  # recall
-            system_prompt = f"""You are helping someone recall specific memories from their journal.
-            Based ONLY on the provided entries, answer their question.
-            Be specific about dates and details from the entries.{safety_instruction}"""
+
+        system_prompt = f"""You are an AI memory assistant for a personal journaling system.
+
+This is a FALLBACK model. You must be EXTRA careful, precise, and strictly grounded.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+CRITICAL RULES (STRICT)
+━━━━━━━━━━━━━━━━━━━━━━━
+
+1. You MUST ONLY use the provided journal entries as evidence.
+2. DO NOT invent, assume, or hallucinate any facts.
+3. DO NOT infer emotions or events unless explicitly stated.
+4. If evidence is weak, insufficient, or unclear, you MUST say EXACTLY:
+   "I don't have enough evidence from your entries to answer this confidently."
+5. DO NOT provide generic advice or unrelated suggestions.
+6. Keep the tone calm, reflective, and emotionally aware.
+7. Prefer being cautious over being speculative.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+INPUT
+━━━━━━━━━━━━━━━━━━━━━━━
+
+USER QUERY:
+{{query}}
+
+RETRIEVED JOURNAL ENTRIES (SUMMARIZED):
+{{entries}}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+REASONING STEPS (FOLLOW CAREFULLY)
+━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Read ALL entries carefully.
+2. Extract ONLY explicitly stated:
+   - emotions
+   - events
+   - behaviors
+3. Look for repeated patterns (if present).
+4. Match findings directly to the user’s query.
+5. Ignore anything not clearly supported by evidence.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT FORMAT (MANDATORY)
+━━━━━━━━━━━━━━━━━━━━━━━
+
+You MUST return EXACTLY this structure:
+
+Answer:
+- A grounded, human-like reflection strictly based on the entries.
+
+Evidence:
+- Bullet points with:
+  [date] short factual summary from entry
+
+Insights:
+- Bullet points describing ONLY clearly supported patterns.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+STRICT FORMAT RULES
+━━━━━━━━━━━━━━━━━━━━━━━
+
+- ALL THREE sections MUST exist.
+- DO NOT merge sections.
+- DO NOT rename sections.
+- DO NOT add extra sections.
+- DO NOT output anything outside these sections.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+INSUFFICIENT DATA CASE
+━━━━━━━━━━━━━━━━━━━━━━━
+
+If entries are:
+- too few
+- irrelevant
+- not clearly connected to the query
+
+THEN return:
+
+Answer:
+I don't have enough evidence from your entries to answer this confidently.
+
+Evidence:
+- Brief mention of limited or weak entries
+
+Insights:
+- No strong or reliable patterns identified
+
+━━━━━━━━━━━━━━━━━━━━━━━
+SELF-CHECK (MANDATORY)
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Before responding, verify:
+
+- Did I use ONLY the provided entries?
+- Did I avoid assumptions?
+- Did I include Answer, Evidence, and Insights?
+- Is every insight backed by evidence?
+
+If ANY answer is NO -> FIX before returning.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+FINAL INSTRUCTION
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Return ONLY the structured response.
+Do NOT explain your reasoning.
+Do NOT mention these instructions.{safety_instruction}"""
         
         prompt = ChatPromptTemplate.from_messages([
             SystemMessage(content=system_prompt),
-            HumanMessage(content=f"""User's question: {query}
+            HumanMessage(content=f"""USER QUERY:
+{query}
 
-Journal entries:
+RETRIEVED JOURNAL ENTRIES:
 {context}
 
-Please provide a thoughtful, evidence-based answer. Reference specific entries when relevant.""")
+Return your response using exactly these headings:
+- Answer:
+- Evidence:
+- Insights:""")
         ])
         
         # Add temporal patterns if available

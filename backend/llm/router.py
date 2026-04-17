@@ -1,195 +1,138 @@
 """
-LLM Router with safe, production-ready fallback (OpenAI → Gemini).
-Note: Groq is disabled due to langchain-core version incompatibility.
-All fallback logic is isolated here - LangGraph remains provider-agnostic.
+LLM router with ordered fallback: OpenAI -> Gemini -> Groq.
 """
 
-from typing import Optional, List
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage
+from typing import Any, Optional
+from langchain_core.messages import BaseMessage, AIMessage
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
-# langchain_groq removed - requires langchain-core>=0.1.41 which conflicts with langchain 0.1.6
-# from langchain_groq import ChatGroq
+from langchain_groq import ChatGroq
 from config.settings import get_settings
 import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("llm.router")
+FALLBACK_MESSAGE = "I don't have enough evidence from your entries to answer this confidently."
 
 
 class LLMRouter:
-    """
-    LLM Router with safe fallback chain: OpenAI → Gemini.
-    
-    OpenAI is always primary (required).
-    Gemini is optional fallback.
-    Groq is disabled (requires langchain-core>=0.1.41, incompatible with langchain 0.1.6).
-    All fallback logic is isolated here.
-    """
-    
-    def __init__(self):
+    """Provider-agnostic router with strict fallback order."""
+
+    def __init__(self) -> None:
         self.settings = get_settings()
-        self._openai_llm: Optional[BaseChatModel] = None
-        self._gemini_llm: Optional[BaseChatModel] = None
-        self._groq_llm: Optional[BaseChatModel] = None
-        self._last_provider: Optional[str] = None
-        self._initialize_providers()
-    
-    def _initialize_providers(self) -> None:
-        """Initialize all available providers at startup."""
-        # OpenAI is required
-        if not self.settings.OPENAI_API_KEY:
-            raise RuntimeError("OPENAI_API_KEY must be set (OpenAI is required)")
-        
-        try:
-            self._openai_llm = self._create_openai_llm()
-            logger.info("Initialized LLM: OpenAI (gpt-4o-mini)")
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize OpenAI LLM: {e}") from e
-        
-        # Gemini is optional
-        if self.settings.GEMINI_API_KEY:
-            try:
-                self._gemini_llm = self._create_gemini_llm()
-                logger.info("Initialized LLM: Gemini (gemini-1.5-flash-002)")
-            except Exception as e:
-                logger.warning(f"Gemini initialization failed (will skip): {e}")
-                self._gemini_llm = None
-        
-        # Groq is disabled - langchain-groq requires langchain-core>=0.1.41 (incompatible with langchain 0.1.6)
-        # if self.settings.GROQ_API_KEY:
-        #     try:
-        #         self._groq_llm = self._create_groq_llm()
-        #         logger.info("Initialized LLM: Groq (llama-3.3-8b-instruct)")
-        #     except Exception as e:
-        #         logger.warning(f"Groq initialization failed (will skip): {e}")
-        #         self._groq_llm = None
-        self._groq_llm = None
-    
-    def _create_openai_llm(self) -> BaseChatModel:
-        """Create OpenAI LLM instance with approved model."""
+        self._last_provider: str = "fallback"
+
+    def _get_openai(self) -> ChatOpenAI:
+        if self.settings.OPENAI_API_KEY is None or not self.settings.OPENAI_API_KEY.strip():
+            raise ValueError("OPENAI_API_KEY not configured")
         return ChatOpenAI(
             model="gpt-4o-mini",
-            temperature=self.settings.LLM_TEMPERATURE,
-            api_key=self.settings.OPENAI_API_KEY
+            api_key=self.settings.OPENAI_API_KEY,
+            temperature=0.3,
         )
-    
-    def _create_gemini_llm(self) -> BaseChatModel:
-        """Create Gemini LLM instance with approved model."""
-        # Use gemini-1.5-flash-002 (stable, not v1beta)
+
+    def _get_gemini(self) -> ChatGoogleGenerativeAI:
+        if self.settings.GEMINI_API_KEY is None or not self.settings.GEMINI_API_KEY.strip():
+            raise ValueError("GEMINI_API_KEY not configured")
         return ChatGoogleGenerativeAI(
             model="gemini-1.5-flash-002",
-            temperature=self.settings.LLM_TEMPERATURE,
-            google_api_key=self.settings.GEMINI_API_KEY
+            google_api_key=self.settings.GEMINI_API_KEY,
+            temperature=0.3,
+            convert_system_message_to_human=True,
         )
-    
-    # def _create_groq_llm(self) -> BaseChatModel:
-    #     """Create Groq LLM instance with approved model."""
-    #     # Disabled: langchain-groq requires langchain-core>=0.1.41 (incompatible with langchain 0.1.6)
-    #     # Use llama-3.3-8b-instruct (current, not decommissioned)
-    #     return ChatGroq(
-    #         model="llama-3.3-8b-instruct",
-    #         temperature=self.settings.LLM_TEMPERATURE,
-    #         groq_api_key=self.settings.GROQ_API_KEY
-    #     )
-    
-    async def generate(self, messages: List[BaseMessage]) -> str:
-        """
-        Generate response with automatic fallback.
-        
-        Tries providers in order: OpenAI → Gemini
-        Returns first successful response or safe fallback string.
-        
-        Args:
-            messages: List of LangChain message objects
-            
-        Returns:
-            str: LLM response or safe fallback message
-        """
-        # Try OpenAI first (required)
+
+    def _get_groq(self) -> ChatGroq:
+        if self.settings.GROQ_API_KEY is None or not self.settings.GROQ_API_KEY.strip():
+            raise ValueError("GROQ_API_KEY not configured")
+        # Support both newer (api_key) and older (groq_api_key) langchain-groq signatures.
         try:
-            response = await self._openai_llm.ainvoke(messages)
-            self._last_provider = "openai"
-            return response.content
-        except Exception as e:
-            logger.warning(f"OpenAI call failed: {str(e)}")
-            # Continue to fallback
-        
-        # Try Gemini (optional fallback)
-        if self._gemini_llm is not None:
+            return ChatGroq(
+                model="llama3-8b-8192",
+                api_key=self.settings.GROQ_API_KEY,
+                temperature=0.3,
+            )
+        except TypeError:
+            return ChatGroq(
+                model="llama3-8b-8192",
+                groq_api_key=self.settings.GROQ_API_KEY,
+                temperature=0.3,
+            )
+
+    def invoke(self, messages: list[BaseMessage]) -> Any:
+        providers = [
+            ("OpenAI", self._get_openai),
+            ("Gemini", self._get_gemini),
+            ("Groq", self._get_groq),
+        ]
+        for name, factory in providers:
+            logger.info(f"Attempting {name}...")
             try:
-                logger.info("Attempting Gemini fallback...")
-                response = await self._gemini_llm.ainvoke(messages)
-                self._last_provider = "gemini"
-                logger.info("Gemini fallback successful")
-                return response.content
+                llm = factory()
+                result = llm.invoke(messages)
+                self._last_provider = name.lower()
+                logger.info(f"{name} succeeded")
+                return result
+            except ValueError as e:
+                logger.warning(f"{name} skipped — not configured: {e}")
+                continue
             except Exception as e:
-                logger.warning(f"Gemini fallback failed: {str(e)}")
-                # Continue to next fallback
-        
-        # Try Groq (last resort fallback)
-        if self._groq_llm is not None:
-            try:
-                logger.info("Attempting Groq fallback...")
-                response = await self._groq_llm.ainvoke(messages)
-                self._last_provider = "groq"
-                logger.info("Groq fallback successful")
-                return response.content
-            except Exception as e:
-                logger.warning(f"Groq fallback failed: {str(e)}")
-        
-        # All providers failed - return safe fallback
+                logger.warning(f"{name} call failed: {e}")
+                continue
         logger.error("All LLM providers failed. Returning safe fallback message.")
         self._last_provider = "fallback"
-        return "I'm having trouble answering right now. Please try again in a moment."
-    
+        return AIMessage(content=FALLBACK_MESSAGE)
+
+    def invoke_with_provider_name(self, messages: list[BaseMessage]) -> tuple[Any, str]:
+        providers = [
+            ("OpenAI", self._get_openai),
+            ("Gemini", self._get_gemini),
+            ("Groq", self._get_groq),
+        ]
+        for name, factory in providers:
+            logger.info(f"Attempting {name}...")
+            try:
+                llm = factory()
+                result = llm.invoke(messages)
+                self._last_provider = name.lower()
+                logger.info(f"{name} succeeded")
+                return result, name.lower()
+            except ValueError as e:
+                logger.warning(f"{name} skipped — not configured: {e}")
+                continue
+            except Exception as e:
+                logger.warning(f"{name} call failed: {e}")
+                continue
+        logger.error("All LLM providers failed. Returning safe fallback message.")
+        self._last_provider = "fallback"
+        return AIMessage(content=FALLBACK_MESSAGE), "fallback"
+
     def get_provider(self) -> str:
-        """Get the last used provider name for logging."""
-        return self._last_provider or "openai"
-    
-    def is_available(self) -> bool:
-        """Check if at least one provider is available."""
-        return self._openai_llm is not None
+        return self._last_provider
 
 
-# Global router instance
-_router: Optional[LLMRouter] = None
+llm_router = LLMRouter()
 
 
 def get_router() -> LLMRouter:
-    """Get or create router instance."""
-    global _router
-    if _router is None:
-        _router = LLMRouter()
-    return _router
-
-
-def get_llm() -> BaseChatModel:
-    """
-    Get LLM instance (for backward compatibility).
-    Returns OpenAI LLM as primary.
-    """
-    router = get_router()
-    if router._openai_llm is None:
-        raise RuntimeError("LLM not initialized")
-    return router._openai_llm
+    """Backward-compatible router getter."""
+    return llm_router
 
 
 def get_llm_provider() -> str:
-    """Get the current LLM provider name for logging."""
-    return get_router().get_provider()
+    """Get the last used provider name for logging."""
+    return llm_router.get_provider()
 
 
-async def generate_with_fallback(messages: List[BaseMessage]) -> str:
-    """
-    Generate LLM response with automatic fallback.
-    This is the main entry point for LangGraph.
-    
-    Args:
-        messages: List of LangChain message objects
-        
-    Returns:
-        str: LLM response or safe fallback message
-    """
-    router = get_router()
-    return await router.generate(messages)
+async def generate_with_fallback(messages: list[BaseMessage]) -> str:
+    """Main async entry point used by graph nodes."""
+    result, provider = llm_router.invoke_with_provider_name(messages)
+    llm_router._last_provider = provider
+    if isinstance(result, AIMessage):
+        return result.content
+    if hasattr(result, "content"):
+        return result.content
+    return str(result)
+
+
+def get_llm() -> Any:
+    """Backward-compatibility shim for legacy references."""
+    return llm_router._get_openai()

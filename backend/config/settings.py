@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     # Note: Actual models are hardcoded in llm/router.py for safety
     LLM_MODEL: str = "gpt-4o-mini"  # Default OpenAI model (final fallback)
     LLM_TEMPERATURE: float = 0.3
-    GROQ_API_KEY: Optional[str] = None
+    GROQ_API_KEY: str | None = None
     GEMINI_API_KEY: Optional[str] = None
     
     # LangGraph Configuration
